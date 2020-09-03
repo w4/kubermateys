@@ -1,0 +1,50 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: bin
+  labels:
+    app: bin
+spec:
+  selector:
+    matchLabels:
+      app: bin
+  template:
+    metadata:
+      labels:
+        app: bin
+    spec:
+      containers:
+      - name: bin
+        image: jord/bin:actix-latest
+        ports:
+        - containerPort: 8000
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: bin
+spec:
+  ports:
+  - name: http
+    targetPort: 8000
+    port: 8000
+  selector:
+    app: bin
+---
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: bin
+  annotations:
+    kubernetes.io/ingress.class: traefik
+  labels:
+    realm: public
+spec:
+  rules:
+  - host: bin.gy
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: bin
+          servicePort: http

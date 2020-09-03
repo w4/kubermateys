@@ -1,0 +1,133 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: deluged-config
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: deluge-web-config
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: deluge
+  labels:
+    app: deluge
+spec:
+  selector:
+    matchLabels:
+      app: deluge
+  template:
+    metadata:
+      labels:
+        app: deluge
+    spec:
+      securityContext:
+        fsGroup: 1337
+      containers:
+      - name: deluged
+        image: 10.0.68.15:5000/deluged:646jpn250j1487q5y5577ggzf3is2vjq
+        ports:
+         - containerPort: 58846
+         - containerPort: 58946
+        volumeMounts:
+          - mountPath: /config
+            name: deluged-config
+          - mountPath: /downloads
+            name: deluged-downloads
+      - name: deluge-web
+        image: 10.0.68.15:5000/deluge-web:7yvagsgfaxgcrqrd4m9lgw8qq381i3wx
+        ports:
+        - containerPort: 8112
+        volumeMounts:
+          - mountPath: /config
+            name: deluge-web-config
+      volumes:
+      - name: deluged-config
+        persistentVolumeClaim:
+          claimName: deluged-config
+      - name: deluge-web-config
+        persistentVolumeClaim:
+          claimName: deluge-web-config
+      - name: deluged-downloads
+        persistentVolumeClaim:
+          claimName: media-downloads-claim-radarr
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deluge-web
+spec:
+  selector:
+    app: deluge
+  ports:
+    - name: web
+      protocol: TCP
+      port: 8112
+      targetPort: 8112
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deluged-tcp
+  annotations:
+    metallb.universe.tf/allow-shared-ip: deluged
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 10.0.68.16
+  selector:
+    app: deluged
+  ports:
+    - name: deluged-tcp
+      protocol: TCP
+      port: 58946
+      targetPort: 58946
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: deluged-udp
+  annotations:
+    metallb.universe.tf/allow-shared-ip: deluged
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 10.0.68.16
+  selector:
+    app: deluged
+  ports:
+    - name: deluged-udp
+      protocol: UDP
+      port: 58946
+      targetPort: 58946
+---
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: git-web
+  annotations:
+    kubernetes.io/ingress.class: traefik
+  labels:
+    realm: internal
+spec:
+  rules:
+  - host: deluge.lercher.gaff.doyl.net
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: deluge-web
+          servicePort: web
+

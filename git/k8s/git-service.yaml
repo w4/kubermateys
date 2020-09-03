@@ -1,0 +1,142 @@
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: public-git-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: private-git-data
+spec:
+  accessModes:
+    - ReadWriteOnce
+  resources:
+    requests:
+      storage: 10Gi
+---
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: git-ssh-authorized-keys
+data:
+  authorized_keys: |
+    ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIK3kwN10QmXsnt7jlZ7mYWXdwjfBmgK3fIp5rji+bas0 (none)
+---
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: git
+  labels:
+    app: git
+spec:
+  selector:
+    matchLabels:
+      app: git
+  template:
+    metadata:
+      labels:
+        app: git
+    spec:
+      securityContext:
+        fsGroup: 1337
+      containers:
+      - name: git-ssh
+        image: 10.0.68.15:5000/git-server:0znqbchy7c6fa8c3mk9vjw3a7qgc1nl0
+        ports:
+         - containerPort: 2222
+        volumeMounts:
+          - mountPath: /data/pub
+            name: public-git-data
+          - mountPath: /data/private
+            name: private-git-data
+          - mountPath: /data/.ssh
+            name: ssh-authorized-keys
+      - name: git-web
+        image: 10.0.68.15:5000/cgit:4b6gx7s41xzvkfyb52v342ixg3ixk811
+        ports:
+        - containerPort: 8333
+        volumeMounts:
+          - mountPath: /data
+            name: public-git-data
+      volumes:
+      - name: public-git-data
+        persistentVolumeClaim:
+          claimName: public-git-data
+      - name: private-git-data
+        persistentVolumeClaim:
+          claimName: private-git-data
+      - name: ssh-authorized-keys
+        configMap:
+          name: git-ssh-authorized-keys
+          items:
+            - key: authorized_keys
+              path: authorized_keys
+---
+apiVersion: batch/v1beta1
+kind: CronJob
+metadata:
+  name: git-sync
+spec:
+  schedule: "*/5 * * * *"
+  jobTemplate:
+    spec:
+      template:
+        spec:
+          restartPolicy: Never
+          containers:
+          - name: git-sync
+            image: 10.0.68.15:5000/git-server:0znqbchy7c6fa8c3mk9vjw3a7qgc1nl0
+            workingDir: /data
+            args:
+            - /data/git-shell-commands/sync-remote
+            - github+w4
+            volumeMounts:
+              - mountPath: /data/pub
+                name: public-git-data
+          volumes:
+          - name: public-git-data
+            persistentVolumeClaim:
+              claimName: public-git-data
+---
+apiVersion: v1
+kind: Service
+metadata:
+  name: git
+spec:
+  type: LoadBalancer
+  loadBalancerIP: 10.0.68.14
+  selector:
+    app: git
+  ports:
+    - name: web
+      protocol: TCP
+      port: 80
+      targetPort: 8333
+    - name: ssh
+      protocol: TCP
+      port: 22
+      targetPort: 2222
+---
+apiVersion: networking.k8s.io/v1beta1
+kind: Ingress
+metadata:
+  name: git-web
+  annotations:
+    kubernetes.io/ingress.class: traefik
+  labels:
+    realm: public
+spec:
+  rules:
+  - host: git.doyle.la
+    http:
+      paths:
+      - path: /
+        backend:
+          serviceName: git
+          servicePort: web
